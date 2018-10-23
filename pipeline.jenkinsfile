@@ -1,0 +1,159 @@
+pipeline {
+	agent { label 'slave' }
+	environment {
+	EMAIL_RECIPIENTS = 'sbrpdevops@gmail.com'
+	ARTIFACTORY_USERNAME = 'artifactory'
+	ARTIFACTORY_PASSWORD = 'AP4ffbfbmpbmnofm'
+	ARTIFACTORY_URL = 'http://localhost:8081/artifactory/'
+	DOC_REPO_URL = 'ssh://gitclone:8443/ms/ios-docs.git'
+	def buildUser = getBuildUser()
+	}
+  options{
+  	timestamps()
+		buildDiscarder(logRotator(artifactNumToKeepStr: '5', numToKeepStr: '5'))
+  		 }
+
+	parameters{
+		string(defaultValue: 'develop', description: '', name: 'FULL_BRANCH_NAME')
+		string(defaultValue: buildUser, description: 'Please do not change this value. It will be sent to log stash.', name: 'User_Id')
+}
+
+
+  stages {
+
+  stage('SCM') {
+
+  steps{
+		timeout(time: 30, unit: 'MINUTES') {
+    checkout([$class: 'GitSCM',
+      branches: [[name: '${FULL_BRANCH_NAME}']],
+      doGenerateSubmoduleConfigurations: false,
+      extensions: [[$class: 'SubmoduleOption', disableSubmodules: true, parentCredentials: true, recursiveSubmodules: false, reference: '', timeout: 15, trackingSubmodules: false], [$class: 'WipeWorkspace']],
+      submoduleCfg: [],
+      userRemoteConfigs: [[credentialsId: '05de1113jjbvivnv', url: 'ssh://githuburl.gitt']]])
+    }
+    }
+		}
+
+
+   stage('Build') {
+      steps {
+			timeout(time: 60, unit: 'MINUTES') {
+			withCredentials([usernamePassword(credentialsId: 'eec135jbbjbvjvbfvb', passwordVariable: 'JENKINSPASS', usernameVariable: 'JENKINSUSER')]) {
+       
+	 }
+    }
+		}
+    }
+
+
+
+		stage('Hockeyapp') {
+			steps {
+			step([$class: 'HockeyappRecorder',
+			applications: [[apiToken: 'd631121enevnovvnv3t32
+			downloadAllowed: true,
+			filePath: 'export/McDonaldsSDKDemo.ipa',
+			mandatory: false, notifyTeam: true,
+			releaseNotesMethod: [$class: 'ManualReleaseNotes', isMarkdown: false, releaseNotes: "Changes" + getChangeString() + "Last"],
+			uploadMethod: [$class: 'VersionCreation',
+			appId: 'b7c46de365ab4dd6vv8d68f68v6v6d6']]],
+			debugMode: false,
+			failGracefully: false])
+				 }
+		}
+
+		stage('Artifactory') {
+			steps {
+			script{
+			try {
+					uploadArtifacts()
+			} catch (err) {
+			echo "Caught: ${err}"
+			currentBuild.result = 'UNSTABLE'
+			}
+			}
+			}
+
+		}
+
+		}
+		post {
+
+       always {
+       archiveArtifacts allowEmptyArchive: true, artifacts: 'export/*.ipa'
+			 logstashSend failBuild: false, maxLines: 100000
+       }
+
+       success {
+
+       script {
+			 if(currentBuild.getPreviousBuild().result == 'FAILURE')
+				 {
+					 emailext body: '''${SCRIPT, template="groovy-html.template"}''',
+					 mimeType: 'text/html',
+					 subject: "($JOB_NAME) Back To Normal on $BUILD_NUMBER Build",
+					 to: "$EMAIL_RECIPIENTS"
+
+						 }
+					 }
+
+       }
+        failure {
+         emailext body: '''${SCRIPT, template="groovy-html.template"}''',
+				 mimeType: 'text/html',
+				 subject: "Build $BUILD_NUMBER - FAILED ($JOB_NAME)",
+				 to: "$EMAIL_RECIPIENTS",
+				 recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+
+           }
+
+
+       }
+		}
+
+		def getChangeString() {
+		MAX_LEN = 100
+
+		def changeString = ""
+
+		echo "Getting SCM changes"
+		def changeLogSets = currentBuild.changeSets
+		for (int i = 0; i < changeLogSets.size(); i++) {
+		def entries = changeLogSets[i].items
+		for (int j = 0; j < entries.length; j++) {
+		def entry = entries[j]
+		truncated_msg = entry.msg.take(MAX_LEN)
+		changeString += " - ${truncated_msg} [${entry.author}]\n"
+		}
+		}
+
+		if (!changeString) {
+		changeString = " - No new changes"
+		}
+		return changeString
+		}
+		def uploadArtifacts() {
+
+		def server = Artifactory.server '13461@133425y'
+		def uploadSpec = """{
+			 "files": [{
+					"pattern": "build/*.ipa",
+					"target": "GMADevOps/iOS/${env.JOB_BASE_NAME}/${env.BUILD_NUMBER}/ipa/",
+					"recursive": "true",
+          "flat": "true"
+			 },
+			 {
+					"pattern": "build/Arch.app.dSYM.zip",
+					"target": "GMADevOps/iOS/${env.JOB_BASE_NAME}/${env.BUILD_NUMBER}/dSYM/",
+					"recursive": "true",
+          "flat": "true"
+			 }]
+		}"""
+
+		server.upload(uploadSpec)
+		}
+
+		def getBuildUser() {
+				return currentBuild.rawBuild.getCause(Cause.UserIdCause).getUserId()
+		}
